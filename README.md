@@ -40,4 +40,20 @@ docker compose run --rm api npm test
 
 ### Валідація DTO
 
-Для `@Body()` з типом DTO диспетчер перед викликом методу проганяє тіло через [`src/pipes/validation.pipe.ts`](src/pipes/validation.pipe.ts): спершу `plainToInstance(Dto, body)`, тоді `validate(instance)`. Перший крок обов'язковий — `class-validator` працює з екземплярами, а не з plain-об'єктами, і без нього мовчки нічого не перевірить. Невалідне тіло → HTTP 400 зі списком `[{ field, constraints }]`; валідне → у метод приходить саме екземпляр DTO (`body instanceof CreateUserDto`).
+Тіло `@Body(schema)` валідується pipe'ом безпосередньо перед обробником. У частині 3 валідацію переписано з `class-validator` на **Zod 4** — див. розділ нижче.
+
+## Життєвий цикл запиту (частина 3)
+
+Кожен HTTP-виклик проходить через ту саму послідовність етапів, що й у NestJS. Диспетчер обгортає весь цикл у `try/catch` на найвищому рівні (щоб exception filter зловив навіть те, що кинув interceptor) і в `als.run(...)` (щоб `requestId` був доступний будь-де в стеку).
+
+```
+
+- **Guard проти interceptor одним реченням:** guard відповідає «пускати чи ні» _до_ всього і не може змінити відповідь; interceptor обгортає виклик і бачить і вхід, і вихід. Вони відрізняються лише місцем виклику в цьому циклі й тим, що кожен може повернути.
+- **Pipe на Zod 4:** [`src/pipes/zod-validation.pipe.ts`](src/pipes/zod-validation.pipe.ts) робить `schema.safeParse(value)`; помилки Zod 4 лежать у `error.issues` (у Zod 3 було `error.errors`). Невалідне тіло → `ValidationError` → 400 зі списком `[{ field, message }]`.
+- **Exception filter** — [`src/filters/exception.filter.ts`](src/filters/exception.filter.ts) — останній у ланцюгу: мапить доменні помилки на статуси, а невідомі — на 500 без витоку повідомлення чи стек-трейсу назовні.
+
+### Чому AsyncLocalStorage, а не глобальна змінна
+
+`requestId` генерується (або береться із заголовка `X-Request-Id`) на вході й кладеться в `AsyncLocalStorage`. Будь-який код глибоко в стеку — сервіс, репозиторій, логер — дістає його через `getRequestId()`, без передавання параметром: див. [`src/services/audit.service.ts`](src/services/audit.service.ts), що викликається на два рівні нижче обробника.
+
+Глобальна змінна тут зламалася б: поки один запит чекає на `await`, event loop встигає прийняти наступний і перезаписати глобал — до моменту логування там уже чужий `id`. `AsyncLocalStorage` цього не допускає, бо `als.run(store, handler)` прив'язує окремий ізольований `store` до всього ланцюга async-викликів саме цього запиту. Тому 10 одночасних запитів (є тест) не змішують контексти: кожен бачить лише свій `requestId`, і той самий id повертається клієнту в заголовку відповіді.
