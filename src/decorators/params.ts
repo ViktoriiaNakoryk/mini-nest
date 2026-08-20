@@ -7,28 +7,36 @@ export type ParamType = 'body' | 'param' | 'query';
 export interface ParamDefinition {
     type: ParamType;
     name?: string;
+    schema?: any;
 }
 
 export type MethodParamsMap = Record<number, ParamDefinition>;
 
 export type ClassParamsMap = Record<string, MethodParamsMap>;
 
-function createParamDecorator(type: ParamType) {
-    return function (name?: string) {
-        return function (target: any, propertyKey: string, parameterIndex: number) {
-            const ctor = target.constructor;
-            const all: ClassParamsMap =
-                Reflect.getMetadata(PARAMS_METADATA, ctor) || {};
+function define(target: any, propertyKey: string, index: number, def: ParamDefinition) {
+    const ctor = target.constructor;
+    const all: ClassParamsMap = Reflect.getMetadata(PARAMS_METADATA, ctor) || {};
+    const forMethod: MethodParamsMap = all[propertyKey] || {};
+    forMethod[index] = def;
+    all[propertyKey] = forMethod;
+    Reflect.defineMetadata(PARAMS_METADATA, all, ctor);
+}
 
-            const forMethod: MethodParamsMap = all[propertyKey] || {};
-            forMethod[parameterIndex] = {type, name};
-
-            all[propertyKey] = forMethod;
-            Reflect.defineMetadata(PARAMS_METADATA, all, ctor);
-        };
+export function Body(schema?: any) {
+    return function (target: any, propertyKey: string, index: number) {
+        define(target, propertyKey, index, {type: 'body', schema});
     };
 }
 
-export const Body = createParamDecorator('body');
-export const Param = createParamDecorator('param');
-export const Query = createParamDecorator('query');
+export function Param(name?: string) {
+    return function (target: any, propertyKey: string, index: number) {
+        define(target, propertyKey, index, {type: 'param', name});
+    };
+}
+
+export function Query(name?: string) {
+    return function (target: any, propertyKey: string, index: number) {
+        define(target, propertyKey, index, {type: 'query', name});
+    };
+}

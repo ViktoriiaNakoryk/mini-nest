@@ -1,10 +1,8 @@
-import {IsEmail, IsString, MinLength} from 'class-validator';
+import {z} from 'zod';
 
-export class CreateUserDto {
-    @IsEmail({}, {message: 'email має бути коректною поштою'})
-    email!: string;
+export const createUserSchema = z.object({
+    email: z.email('email має бути коректною поштою'),
+    name: z.string().min(2, 'name має містити щонайменше 2 символи'),
+});
 
-    @IsString()
-    @MinLength(2, {message: 'name має містити щонайменше 2 символи'})
-    name!: string;
-}
+export type CreateUserInput = z.infer<typeof createUserSchema>;
